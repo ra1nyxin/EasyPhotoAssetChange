@@ -1,27 +1,28 @@
-name: CI-CD-iOS-Dist
+name: Production-Release-Automation
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
 
 jobs:
-  build_and_archive:
+  deploy_release:
     runs-on: macos-14
+    permissions:
+      contents: write
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Xcode Environment
+      - name: Setup Environment
         run: sudo xcode-select -s /Applications/Xcode_15.4.app
 
-      - name: Generate Minimal Xcode Project
+      - name: Initialize App Structure
         run: |
           mkdir -p EasyPhotoAssetChange/Base.lproj
-          
           if [ -f "ContentView.swift" ]; then
             mv ContentView.swift EasyPhotoAssetChange/
           fi
-
+          
           cat <<EOF > EasyPhotoAssetChange/AppEntry.swift
           import SwiftUI
           @main
@@ -40,11 +41,13 @@ jobs:
           <plist version="1.0">
           <dict>
               <key>CFBundleExecutable</key>
-              <string>\$(EXECUTABLE_NAME)</string>
+              <string>EasyPhotoAssetChange</string>
               <key>CFBundleIdentifier</key>
               <string>com.ra1nyxin.EasyPhotoAssetChange</string>
               <key>CFBundleName</key>
               <string>GeoModifier</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
               <key>CFBundleShortVersionString</key>
               <string>1.0</string>
               <key>CFBundleVersion</key>
@@ -57,35 +60,52 @@ jobs:
               <string>需要保存修改后的地理位置数据</string>
               <key>NSLocationWhenInUseUsageDescription</key>
               <string>用于地图选点参考</string>
+              <key>MinimumOSVersion</key>
+              <string>15.0</string>
           </dict>
           </plist>
           EOF
 
-      - name: Compile Single File App
+      - name: Hardened Compilation (arm64)
         run: |
-          mkdir -p build/Payload
+          mkdir -p build/Payload/EasyPhotoAssetChange.app
           
           xcrun -sdk iphoneos swiftc \
             -target arm64-apple-ios17.0 \
             -sdk $(xcrun --sdk iphoneos --show-sdk-path) \
             -O -whole-module-optimization \
-            -o build/Payload/EasyPhotoAssetChange \
+            -o build/Payload/EasyPhotoAssetChange.app/EasyPhotoAssetChange \
             EasyPhotoAssetChange/ContentView.swift \
             EasyPhotoAssetChange/AppEntry.swift
             
-          mkdir -p build/Payload/EasyPhotoAssetChange.app
-          mv build/Payload/EasyPhotoAssetChange build/Payload/EasyPhotoAssetChange.app/
           cp EasyPhotoAssetChange/Info.plist build/Payload/EasyPhotoAssetChange.app/
           echo "APPL????" > build/Payload/EasyPhotoAssetChange.app/PkgInfo
 
-      - name: Package IPA
+      - name: Generate IPA Packet
         run: |
           cd build
           zip -r ../EasyPhotoAssetChange.ipa Payload
+          cd ..
 
-      - name: Archive Production IPA
-        uses: actions/upload-artifact@v4
+      - name: Create Randomized Release
+        id: create_release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RAND_VAL=$(openssl rand -hex 4)
+          TAG_NAME="v1.0.${RAND_VAL}"
+          RELEASE_TITLE="Release-Build-${RAND_VAL^^}"
+          
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+          echo "RELEASE_TITLE=$RELEASE_TITLE" >> $GITHUB_ENV
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: GeoModifier-Production
-          path: EasyPhotoAssetChange.ipa
-          retention-days: 7
+          tag_name: ${{ env.TAG_NAME }}
+          name: ${{ env.RELEASE_TITLE }}
+          files: EasyPhotoAssetChange.ipa
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
