@@ -16,14 +16,14 @@ jobs:
       - name: Setup Environment
         run: sudo xcode-select -s /Applications/Xcode_15.4.app
 
-      - name: Create Standard Project Structure
+      - name: Synthesize App Source & Manifest
         run: |
-          mkdir -p EasyPhotoAssetChange/Base.lproj
+          mkdir -p Sources/EasyPhotoAssetChange
           if [ -f "ContentView.swift" ]; then
-            mv ContentView.swift EasyPhotoAssetChange/
+            cp ContentView.swift Sources/EasyPhotoAssetChange/
           fi
           
-          cat <<EOF > EasyPhotoAssetChange/AppEntry.swift
+          cat <<EOF > Sources/EasyPhotoAssetChange/AppEntry.swift
           import SwiftUI
           @main
           struct GeoModifierApp: App {
@@ -35,23 +35,6 @@ jobs:
           }
           EOF
 
-          cat <<EOF > EasyPhotoAssetChange/EasyPhotoAssetChange.entitlements
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>com.apple.developer.applesignin</key>
-              <array>
-                  <string>Default</string>
-              </array>
-              <key>com.apple.security.personal-information.photos-library</key>
-              <true/>
-          </dict>
-          </plist>
-          EOF
-
-      - name: Generate Xcode Project (Dynamic)
-        run: |
           cat <<EOF > Package.swift
           // swift-tools-version: 5.9
           import PackageDescription
@@ -59,49 +42,84 @@ jobs:
               name: "EasyPhotoAssetChange",
               platforms: [.iOS(.v17)],
               products: [.executable(name: "EasyPhotoAssetChange", targets: ["EasyPhotoAssetChange"])],
-              targets: [.executableTarget(name: "EasyPhotoAssetChange", path: "EasyPhotoAssetChange")]
+              targets: [.target(name: "EasyPhotoAssetChange", path: "Sources/EasyPhotoAssetChange")]
           )
           EOF
-          swift package generate-xcodeproj
 
-      - name: Standard Build and Archive
+          cat <<EOF > Info.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>EasyPhotoAssetChange</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.ra1nyxin.EasyPhotoAssetChange</string>
+              <key>CFBundleName</key>
+              <string>GeoModifier</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+              <key>CFBundleVersion</key>
+              <string>1</string>
+              <key>LSRequiresIPhoneOS</key>
+              <true/>
+              <key>NSPhotoLibraryUsageDescription</key>
+              <string>需要访问相册以修改图片位置信息</string>
+              <key>NSPhotoLibraryAddUsageDescription</key>
+              <string>需要保存修改后的地理位置数据</string>
+              <key>NSLocationWhenInUseUsageDescription</key>
+              <string>用于地图选点参考</string>
+              <key>MinimumOSVersion</key>
+              <string>15.0</string>
+              <key>CFBundleSupportedPlatforms</key>
+              <array><string>iPhoneOS</string></array>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Build via SPM and xcodebuild
         run: |
-          xcodebuild -project EasyPhotoAssetChange.xcodeproj \
+          xcodebuild build \
             -scheme EasyPhotoAssetChange \
-            -configuration Release \
             -destination 'generic/platform=iOS' \
-            -archivePath build/EasyPhotoAssetChange.xcarchive \
+            -configuration Release \
+            -derivedDataPath .build/derivedData \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            clean archive
+            CODE_SIGN_IDENTITY=""
 
-      - name: Construct IPA for Sideloading
+      - name: Assemble IPA Bundle
         run: |
-          mkdir -p Payload
-          cp -r build/EasyPhotoAssetChange.xcarchive/Products/usr/local/bin/EasyPhotoAssetChange.app Payload/ || \
-          cp -r build/EasyPhotoAssetChange.xcarchive/Products/Applications/EasyPhotoAssetChange.app Payload/
-          INFO_PLIST="Payload/EasyPhotoAssetChange.app/Info.plist"
-          /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.ra1nyxin.EasyPhotoAssetChange" $INFO_PLIST || true
-          /usr/libexec/PlistBuddy -c "Add :CFBundleSupportedPlatforms array" $INFO_PLIST || true
-          /usr/libexec/PlistBuddy -c "Add :CFBundleSupportedPlatforms:0 string iPhoneOS" $INFO_PLIST || true
-          /usr/libexec/PlistBuddy -c "Add :MinimumOSVersion string 15.0" $INFO_PLIST || true
+          mkdir -p Payload/EasyPhotoAssetChange.app
+          BINARY_PATH=\$(find .build/derivedData -name "EasyPhotoAssetChange" -type f -perm +111 | grep "Release-iphoneos" | head -n 1)
+          
+          if [ -z "\$BINARY_PATH" ]; then
+            echo "Error: Binary not found."
+            exit 1
+          fi
+          
+          cp "\$BINARY_PATH" Payload/EasyPhotoAssetChange.app/
+          cp Info.plist Payload/EasyPhotoAssetChange.app/
+          echo "APPL????" > Payload/EasyPhotoAssetChange.app/PkgInfo
+          mkdir -p Payload/EasyPhotoAssetChange.app/_CodeSignature
           
           zip -r EasyPhotoAssetChange.ipa Payload
 
-      - name: Create Randomized Metadata
+      - name: Release Logic
         id: meta
         run: |
-          RAND_VAL=$(openssl rand -hex 4)
-          RAND_UPPER=$(echo "$RAND_VAL" | tr '[:lower:]' '[:upper:]')
-          echo "TAG_NAME=v1.0.${RAND_VAL}" >> $GITHUB_ENV
-          echo "RELEASE_TITLE=Release-Build-${RAND_UPPER}" >> $GITHUB_ENV
+          RAND_VAL=\$(openssl rand -hex 4)
+          RAND_UPPER=\$(echo "\$RAND_VAL" | tr '[:lower:]' '[:upper:]')
+          echo "TAG_NAME=v1.0.\${RAND_VAL}" >> \$GITHUB_ENV
+          echo "RELEASE_TITLE=Release-Build-\${RAND_UPPER}" >> \$GITHUB_ENV
 
-      - name: Publish to GitHub Release
+      - name: Publish Artifacts
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.TAG_NAME }}
-          name: ${{ env.RELEASE_TITLE }}
+          tag_name: \${{ env.TAG_NAME }}
+          name: \${{ env.RELEASE_TITLE }}
           files: EasyPhotoAssetChange.ipa
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
