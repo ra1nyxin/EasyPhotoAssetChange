@@ -53,3 +53,5 @@ We welcome any Pull Requests (PR) or Issues, especially in the following areas:
 *   Optimizing code-signing stubs in Xcode-free environments.
 *   Resolving re-signing compatibility issues for binaries compiled by `swiftc` on Sideloadly.
 *   Adapting to potential new privacy sandbox policies in iOS 24+.
+
+<img width="100%" height="100%" alt="image" src="https://github.com/user-attachments/assets/a4de51ab-2650-4d68-ae43-449bf3add4c6" />
