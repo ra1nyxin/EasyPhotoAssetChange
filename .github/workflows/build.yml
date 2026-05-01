@@ -19,6 +19,7 @@ jobs:
       - name: Initialize App Structure
         run: |
           mkdir -p EasyPhotoAssetChange/Base.lproj
+
           if [ -f "ContentView.swift" ]; then
             mv ContentView.swift EasyPhotoAssetChange/
           fi
@@ -69,7 +70,6 @@ jobs:
       - name: Hardened Compilation (arm64)
         run: |
           mkdir -p build/Payload/EasyPhotoAssetChange.app
-          
           xcrun -sdk iphoneos swiftc \
             -target arm64-apple-ios17.0 \
             -sdk $(xcrun --sdk iphoneos --show-sdk-path) \
@@ -87,14 +87,14 @@ jobs:
           zip -r ../EasyPhotoAssetChange.ipa Payload
           cd ..
 
-      - name: Create Randomized Release
-        id: create_release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create Randomized Metadata
+        id: meta
         run: |
           RAND_VAL=$(openssl rand -hex 4)
+          RAND_UPPER=$(echo "$RAND_VAL" | tr '[:lower:]' '[:upper:]')
+          
           TAG_NAME="v1.0.${RAND_VAL}"
-          RELEASE_TITLE="Release-Build-${RAND_VAL^^}"
+          RELEASE_TITLE="Release-Build-${RAND_UPPER}"
           
           echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
           echo "RELEASE_TITLE=$RELEASE_TITLE" >> $GITHUB_ENV
