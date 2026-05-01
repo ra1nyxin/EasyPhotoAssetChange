@@ -1,0 +1,54 @@
+name: CI-CD-iOS-Dist
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build_and_archive:
+    runs-on: macos-14
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Inject Privacy Manifest
+        run: |
+          INFO_PLIST="EasyPhotoAssetChange/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string '需要访问相册以修改图片位置信息'" $INFO_PLIST || true
+          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryAddUsageDescription string '需要保存修改后的地理位置数据'" $INFO_PLIST || true
+          /usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string '用于地图选点参考'" $INFO_PLIST || true
+
+      - name: Cache Build Data
+        uses: actions/cache@v4
+        with:
+          path: DerivedData
+          key: ${{ runner.os }}-xcode-${{ hashFiles('**/*.swift') }}
+
+      - name: Compile Application (No-Sign)
+        run: |
+          xcodebuild -project EasyPhotoAssetChange.xcodeproj \
+                     -scheme EasyPhotoAssetChange \
+                     -sdk iphoneos \
+                     -configuration Release \
+                     -derivedDataPath DerivedData \
+                     CODE_SIGNING_ALLOWED=NO \
+                     CODE_SIGNING_REQUIRED=NO \
+                     CODE_SIGN_IDENTITY="" \
+                     AD_HOC_CODE_SIGNING_ALLOWED=YES
+
+      - name: Package IPA Structure
+        run: |
+          mkdir -p Payload
+          APP_PATH=$(find DerivedData -name "*.app" | head -n 1)
+          cp -r "$APP_PATH" Payload/
+          zip -r EasyPhotoAssetChange.ipa Payload
+
+      - name: Archive Production IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: GeoModifier-Production
+          path: EasyPhotoAssetChange.ipa
+          retention-days: 7
