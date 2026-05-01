@@ -16,10 +16,9 @@ jobs:
       - name: Setup Environment
         run: sudo xcode-select -s /Applications/Xcode_15.4.app
 
-      - name: Initialize App Structure
+      - name: Create Standard Project Structure
         run: |
           mkdir -p EasyPhotoAssetChange/Base.lproj
-
           if [ -f "ContentView.swift" ]; then
             mv ContentView.swift EasyPhotoAssetChange/
           fi
@@ -36,68 +35,67 @@ jobs:
           }
           EOF
 
-          cat <<EOF > EasyPhotoAssetChange/Info.plist
+          cat <<EOF > EasyPhotoAssetChange/EasyPhotoAssetChange.entitlements
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-              <key>CFBundleExecutable</key>
-              <string>EasyPhotoAssetChange</string>
-              <key>CFBundleIdentifier</key>
-              <string>com.ra1nyxin.EasyPhotoAssetChange</string>
-              <key>CFBundleName</key>
-              <string>GeoModifier</string>
-              <key>CFBundlePackageType</key>
-              <string>APPL</string>
-              <key>CFBundleShortVersionString</key>
-              <string>1.0</string>
-              <key>CFBundleVersion</key>
-              <string>1</string>
-              <key>LSRequiresIPhoneOS</key>
+              <key>com.apple.developer.applesignin</key>
+              <array>
+                  <string>Default</string>
+              </array>
+              <key>com.apple.security.personal-information.photos-library</key>
               <true/>
-              <key>NSPhotoLibraryUsageDescription</key>
-              <string>需要访问相册以修改图片位置信息</string>
-              <key>NSPhotoLibraryAddUsageDescription</key>
-              <string>需要保存修改后的地理位置数据</string>
-              <key>NSLocationWhenInUseUsageDescription</key>
-              <string>用于地图选点参考</string>
-              <key>MinimumOSVersion</key>
-              <string>15.0</string>
           </dict>
           </plist>
           EOF
 
-      - name: Hardened Compilation (arm64)
+      - name: Generate Xcode Project (Dynamic)
         run: |
-          mkdir -p build/Payload/EasyPhotoAssetChange.app
-          xcrun -sdk iphoneos swiftc \
-            -target arm64-apple-ios17.0 \
-            -sdk $(xcrun --sdk iphoneos --show-sdk-path) \
-            -O -whole-module-optimization \
-            -o build/Payload/EasyPhotoAssetChange.app/EasyPhotoAssetChange \
-            EasyPhotoAssetChange/ContentView.swift \
-            EasyPhotoAssetChange/AppEntry.swift
-            
-          cp EasyPhotoAssetChange/Info.plist build/Payload/EasyPhotoAssetChange.app/
-          echo "APPL????" > build/Payload/EasyPhotoAssetChange.app/PkgInfo
+          cat <<EOF > Package.swift
+          // swift-tools-version: 5.9
+          import PackageDescription
+          let package = Package(
+              name: "EasyPhotoAssetChange",
+              platforms: [.iOS(.v17)],
+              products: [.executable(name: "EasyPhotoAssetChange", targets: ["EasyPhotoAssetChange"])],
+              targets: [.executableTarget(name: "EasyPhotoAssetChange", path: "EasyPhotoAssetChange")]
+          )
+          EOF
+          swift package generate-xcodeproj
 
-      - name: Generate IPA Packet
+      - name: Standard Build and Archive
         run: |
-          cd build
-          zip -r ../EasyPhotoAssetChange.ipa Payload
-          cd ..
+          xcodebuild -project EasyPhotoAssetChange.xcodeproj \
+            -scheme EasyPhotoAssetChange \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/EasyPhotoAssetChange.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            clean archive
+
+      - name: Construct IPA for Sideloading
+        run: |
+          mkdir -p Payload
+          cp -r build/EasyPhotoAssetChange.xcarchive/Products/usr/local/bin/EasyPhotoAssetChange.app Payload/ || \
+          cp -r build/EasyPhotoAssetChange.xcarchive/Products/Applications/EasyPhotoAssetChange.app Payload/
+          INFO_PLIST="Payload/EasyPhotoAssetChange.app/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.ra1nyxin.EasyPhotoAssetChange" $INFO_PLIST || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleSupportedPlatforms array" $INFO_PLIST || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleSupportedPlatforms:0 string iPhoneOS" $INFO_PLIST || true
+          /usr/libexec/PlistBuddy -c "Add :MinimumOSVersion string 15.0" $INFO_PLIST || true
+          
+          zip -r EasyPhotoAssetChange.ipa Payload
 
       - name: Create Randomized Metadata
         id: meta
         run: |
           RAND_VAL=$(openssl rand -hex 4)
           RAND_UPPER=$(echo "$RAND_VAL" | tr '[:lower:]' '[:upper:]')
-          
-          TAG_NAME="v1.0.${RAND_VAL}"
-          RELEASE_TITLE="Release-Build-${RAND_UPPER}"
-          
-          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
-          echo "RELEASE_TITLE=$RELEASE_TITLE" >> $GITHUB_ENV
+          echo "TAG_NAME=v1.0.${RAND_VAL}" >> $GITHUB_ENV
+          echo "RELEASE_TITLE=Release-Build-${RAND_UPPER}" >> $GITHUB_ENV
 
       - name: Publish to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -105,7 +103,5 @@ jobs:
           tag_name: ${{ env.TAG_NAME }}
           name: ${{ env.RELEASE_TITLE }}
           files: EasyPhotoAssetChange.ipa
-          draft: false
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
