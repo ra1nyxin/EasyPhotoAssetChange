@@ -11,40 +11,77 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Xcode
+      - name: Setup Xcode Environment
         run: sudo xcode-select -s /Applications/Xcode_15.4.app
 
-      - name: Inject Privacy Manifest
+      - name: Generate Minimal Xcode Project
         run: |
-          INFO_PLIST="EasyPhotoAssetChange/Info.plist"
-          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string '需要访问相册以修改图片位置信息'" $INFO_PLIST || true
-          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryAddUsageDescription string '需要保存修改后的地理位置数据'" $INFO_PLIST || true
-          /usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string '用于地图选点参考'" $INFO_PLIST || true
+          mkdir -p EasyPhotoAssetChange/Base.lproj
+          
+          if [ -f "ContentView.swift" ]; then
+            mv ContentView.swift EasyPhotoAssetChange/
+          fi
 
-      - name: Cache Build Data
-        uses: actions/cache@v4
-        with:
-          path: DerivedData
-          key: ${{ runner.os }}-xcode-${{ hashFiles('**/*.swift') }}
+          cat <<EOF > EasyPhotoAssetChange/AppEntry.swift
+          import SwiftUI
+          @main
+          struct GeoModifierApp: App {
+              var body: some Scene {
+                  WindowGroup {
+                      ContentView()
+                  }
+              }
+          }
+          EOF
 
-      - name: Compile Application (No-Sign)
+          cat <<EOF > EasyPhotoAssetChange/Info.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>\$(EXECUTABLE_NAME)</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.ra1nyxin.EasyPhotoAssetChange</string>
+              <key>CFBundleName</key>
+              <string>GeoModifier</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+              <key>CFBundleVersion</key>
+              <string>1</string>
+              <key>LSRequiresIPhoneOS</key>
+              <true/>
+              <key>NSPhotoLibraryUsageDescription</key>
+              <string>需要访问相册以修改图片位置信息</string>
+              <key>NSPhotoLibraryAddUsageDescription</key>
+              <string>需要保存修改后的地理位置数据</string>
+              <key>NSLocationWhenInUseUsageDescription</key>
+              <string>用于地图选点参考</string>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Compile Single File App
         run: |
-          xcodebuild -project EasyPhotoAssetChange.xcodeproj \
-                     -scheme EasyPhotoAssetChange \
-                     -sdk iphoneos \
-                     -configuration Release \
-                     -derivedDataPath DerivedData \
-                     CODE_SIGNING_ALLOWED=NO \
-                     CODE_SIGNING_REQUIRED=NO \
-                     CODE_SIGN_IDENTITY="" \
-                     AD_HOC_CODE_SIGNING_ALLOWED=YES
+          mkdir -p build/Payload
+          
+          xcrun -sdk iphoneos swiftc \
+            -target arm64-apple-ios17.0 \
+            -sdk $(xcrun --sdk iphoneos --show-sdk-path) \
+            -O -whole-module-optimization \
+            -o build/Payload/EasyPhotoAssetChange \
+            EasyPhotoAssetChange/ContentView.swift \
+            EasyPhotoAssetChange/AppEntry.swift
+            
+          mkdir -p build/Payload/EasyPhotoAssetChange.app
+          mv build/Payload/EasyPhotoAssetChange build/Payload/EasyPhotoAssetChange.app/
+          cp EasyPhotoAssetChange/Info.plist build/Payload/EasyPhotoAssetChange.app/
+          echo "APPL????" > build/Payload/EasyPhotoAssetChange.app/PkgInfo
 
-      - name: Package IPA Structure
+      - name: Package IPA
         run: |
-          mkdir -p Payload
-          APP_PATH=$(find DerivedData -name "*.app" | head -n 1)
-          cp -r "$APP_PATH" Payload/
-          zip -r EasyPhotoAssetChange.ipa Payload
+          cd build
+          zip -r ../EasyPhotoAssetChange.ipa Payload
 
       - name: Archive Production IPA
         uses: actions/upload-artifact@v4
