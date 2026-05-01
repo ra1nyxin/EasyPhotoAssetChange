@@ -16,15 +16,18 @@ jobs:
       - name: Setup Environment
         run: sudo xcode-select -s /Applications/Xcode_15.4.app
 
-      - name: Synthesize App Source & Manifest
+      - name: Synthesize Production Code
         run: |
-          mkdir -p Sources/EasyPhotoAssetChange
-          if [ -f "ContentView.swift" ]; then
-            cp ContentView.swift Sources/EasyPhotoAssetChange/
-          fi
+          mkdir -p build/Payload/EasyPhotoAssetChange.app
           
-          cat <<EOF > Sources/EasyPhotoAssetChange/AppEntry.swift
+          cat <<EOF > UnifiedSource.swift
           import SwiftUI
+          import Photos
+          import PhotosUI
+          import MapKit
+
+          $(cat ContentView.swift)
+
           @main
           struct GeoModifierApp: App {
               var body: some Scene {
@@ -33,17 +36,6 @@ jobs:
                   }
               }
           }
-          EOF
-
-          cat <<EOF > Package.swift
-          // swift-tools-version: 5.9
-          import PackageDescription
-          let package = Package(
-              name: "EasyPhotoAssetChange",
-              platforms: [.iOS(.v17)],
-              products: [.executable(name: "EasyPhotoAssetChange", targets: ["EasyPhotoAssetChange"])],
-              targets: [.target(name: "EasyPhotoAssetChange", path: "Sources/EasyPhotoAssetChange")]
-          )
           EOF
 
           cat <<EOF > Info.plist
@@ -75,51 +67,54 @@ jobs:
               <string>15.0</string>
               <key>CFBundleSupportedPlatforms</key>
               <array><string>iPhoneOS</string></array>
+              <key>UIDeviceFamily</key>
+              <array><integer>1</integer><integer>2</integer></array>
           </dict>
           </plist>
           EOF
 
-      - name: Build via SPM and xcodebuild
+      - name: Low-Level Toolchain Compilation
         run: |
-          xcodebuild build \
-            -scheme EasyPhotoAssetChange \
-            -destination 'generic/platform=iOS' \
-            -configuration Release \
-            -derivedDataPath .build/derivedData \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
+          SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
+          xcrun swiftc UnifiedSource.swift \
+            -sdk "$SDK_PATH" \
+            -target arm64-apple-ios17.0 \
+            -O -whole-module-optimization \
+            -o build/Payload/EasyPhotoAssetChange.app/EasyPhotoAssetChange \
+            -framework SwiftUI \
+            -framework Photos \
+            -framework PhotosUI \
+            -framework MapKit \
+            -framework UIKit \
+            -Xlinker -rpath -Xlinker /usr/lib/swift \
+            -Xlinker -rpath -Xlinker @executable_path/Frameworks
 
-      - name: Assemble IPA Bundle
+      - name: Finalize App Bundle
         run: |
-          mkdir -p Payload/EasyPhotoAssetChange.app
-          BINARY_PATH=\$(find .build/derivedData -name "EasyPhotoAssetChange" -type f -perm +111 | grep "Release-iphoneos" | head -n 1)
-          
-          if [ -z "\$BINARY_PATH" ]; then
-            echo "Error: Binary not found."
+          cp Info.plist build/Payload/EasyPhotoAssetChange.app/
+          echo "APPL????" > build/Payload/EasyPhotoAssetChange.app/PkgInfo
+          mkdir -p build/Payload/EasyPhotoAssetChange.app/_CodeSignature
+          if [ ! -f "build/Payload/EasyPhotoAssetChange.app/EasyPhotoAssetChange" ]; then
+            echo "Binary compilation failed!"
             exit 1
           fi
           
-          cp "\$BINARY_PATH" Payload/EasyPhotoAssetChange.app/
-          cp Info.plist Payload/EasyPhotoAssetChange.app/
-          echo "APPL????" > Payload/EasyPhotoAssetChange.app/PkgInfo
-          mkdir -p Payload/EasyPhotoAssetChange.app/_CodeSignature
-          
-          zip -r EasyPhotoAssetChange.ipa Payload
+          cd build
+          zip -r ../EasyPhotoAssetChange.ipa Payload
 
       - name: Release Logic
         id: meta
         run: |
-          RAND_VAL=\$(openssl rand -hex 4)
-          RAND_UPPER=\$(echo "\$RAND_VAL" | tr '[:lower:]' '[:upper:]')
-          echo "TAG_NAME=v1.0.\${RAND_VAL}" >> \$GITHUB_ENV
-          echo "RELEASE_TITLE=Release-Build-\${RAND_UPPER}" >> \$GITHUB_ENV
+          RAND_VAL=$(openssl rand -hex 4)
+          RAND_UPPER=$(echo "$RAND_VAL" | tr '[:lower:]' '[:upper:]')
+          echo "TAG_NAME=v1.0.${RAND_VAL}" >> $GITHUB_ENV
+          echo "RELEASE_TITLE=Release-Build-${RAND_UPPER}" >> $GITHUB_ENV
 
       - name: Publish Artifacts
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: \${{ env.TAG_NAME }}
-          name: \${{ env.RELEASE_TITLE }}
+          tag_name: ${{ env.TAG_NAME }}
+          name: ${{ env.RELEASE_TITLE }}
           files: EasyPhotoAssetChange.ipa
         env:
-          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
