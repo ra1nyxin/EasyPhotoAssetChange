@@ -69,17 +69,21 @@ jobs:
               <array><string>iPhoneOS</string></array>
               <key>UIDeviceFamily</key>
               <array><integer>1</integer><integer>2</integer></array>
+              <key>UILaunchScreen</key>
+              <dict/>
           </dict>
           </plist>
           EOF
 
-      - name: Low-Level Toolchain Compilation
+      - name: Bare-Metal Toolchain Compilation
         run: |
           SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
+          
           xcrun swiftc UnifiedSource.swift \
             -sdk "$SDK_PATH" \
             -target arm64-apple-ios17.0 \
             -O -whole-module-optimization \
+            -parse-as-library \
             -o build/Payload/EasyPhotoAssetChange.app/EasyPhotoAssetChange \
             -framework SwiftUI \
             -framework Photos \
@@ -89,15 +93,19 @@ jobs:
             -Xlinker -rpath -Xlinker /usr/lib/swift \
             -Xlinker -rpath -Xlinker @executable_path/Frameworks
 
-      - name: Finalize App Bundle
+      - name: Bundle Finalization & Validation
         run: |
           cp Info.plist build/Payload/EasyPhotoAssetChange.app/
           echo "APPL????" > build/Payload/EasyPhotoAssetChange.app/PkgInfo
+          
           mkdir -p build/Payload/EasyPhotoAssetChange.app/_CodeSignature
+          
           if [ ! -f "build/Payload/EasyPhotoAssetChange.app/EasyPhotoAssetChange" ]; then
-            echo "Binary compilation failed!"
+            echo "[CRITICAL] Binary missing post-compilation."
             exit 1
           fi
+          
+          lipo -info build/Payload/EasyPhotoAssetChange.app/EasyPhotoAssetChange
           
           cd build
           zip -r ../EasyPhotoAssetChange.ipa Payload
@@ -110,7 +118,7 @@ jobs:
           echo "TAG_NAME=v1.0.${RAND_VAL}" >> $GITHUB_ENV
           echo "RELEASE_TITLE=Release-Build-${RAND_UPPER}" >> $GITHUB_ENV
 
-      - name: Publish Artifacts
+      - name: Publish to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG_NAME }}
